@@ -4,6 +4,7 @@
 // @version      0.2
 // @description  Index best answers and 50 alternatives
 // @match        https://playdaily.org/krillion*
+// @icon         https://krillion.io/tiers/krillion-halloween-2026.png
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -18,6 +19,19 @@
   const matches = new Map();
   const pending = new Map();
   const submittedAnswers = new Map();
+  const inFlightAnswers = new Set();
+  const roomModes = new Map();
+
+  function isClassicMatch(key) {
+    const separator = key.lastIndexOf(":");
+    if (separator === -1) {
+      return false;
+    }
+
+    const room = key.slice(0, separator);
+
+    return roomModes.get(room) === "classic";
+  }
 
   function getKey(url) {
     const room = url.searchParams.get("room");
@@ -106,9 +120,11 @@
     };
   }
 
-  const inFlightAnswers = new Set();
+  async function savePrompt(prompt, candidates, key) {
+    if (!isClassicMatch(key)) {
+        return;
+    }
 
-  async function savePrompt(prompt, candidates) {
     if (!candidates.length) return;
 
     // Keep the highest observed score per answer.
@@ -197,6 +213,10 @@
   }
 
   function processRows(key, rows) {
+    if (!isClassicMatch(key)) {
+        return;
+    }
+
     const prompts = matches.get(key);
 
     // If we haven't received the lineup yet,
@@ -256,7 +276,7 @@
     for (const [round, candidates] of grouped) {
       const prompt = prompts[round];
 
-      savePrompt(prompt, candidates).catch((error) => {
+      savePrompt(prompt, candidates, key).catch((error) => {
         console.error("[Krillion] Processing error:", error);
       });
     }
@@ -292,6 +312,62 @@
     }
   }
 
+  async function detectGameMode(requestUrl, input, options, promise) {
+    const url = new URL(requestUrl, location.href);
+    const rpc = url.pathname.split("/").pop();
+
+    if (
+      !url.pathname.includes("/rest/v1/rpc/") ||
+      !/^krillion_.*_touch_seat$/.test(rpc)
+    ) {
+      return;
+    }
+
+    let payload;
+
+    try {
+      if (typeof options?.body === "string") {
+        payload = JSON.parse(options.body);
+      } else if (input instanceof Request) {
+        payload = await input.clone().json();
+      } else {
+        return;
+      }
+    } catch (error) {
+      console.warn("[Krillion] Cannot read seat payload", error);
+      return;
+    }
+
+    const room = payload?.p_room_id;
+
+    if (typeof room !== "string" || !room) {
+      return;
+    }
+
+    // Immediately revoke any previous authorization.
+    roomModes.delete(room);
+
+    try {
+      const response = await promise;
+
+      if (!response.ok) {
+        return;
+      }
+
+      if (rpc === "krillion_arena_touch_seat") {
+        roomModes.set(room, "classic");
+
+        console.log(`[Krillion] Classic room verified: ${room}`);
+      } else {
+        roomModes.set(room, "other");
+
+        console.log(`[Krillion] Ignoring ${rpc}: ${room}`);
+      }
+    } catch (error) {
+      console.warn("[Krillion] Seat request failed", error);
+    }
+  }
+
   const originalFetch = window.fetch;
 
   window.fetch = function (...args) {
@@ -305,6 +381,10 @@
           : input?.url;
 
       if (!requestUrl) return promise;
+
+      detectGameMode(requestUrl, args[0], args[1], promise).catch(
+        console.error,
+      );
 
       const url = new URL(requestUrl, location.href);
       const endpoint = url.pathname.split("/").pop();
