@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const express = require("express");
@@ -13,7 +12,7 @@ const SCORE_MAP = {
   16: 2,
   32: 3,
   64: 4,
-  100: 5
+  100: 5,
 };
 
 function convertScore(points) {
@@ -26,11 +25,13 @@ function convertScore(points) {
   return score;
 }
 
-app.use(cors({
-  origin: "https://playdaily.org",
-  methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type"]
-}));
+app.use(
+  cors({
+    origin: "https://playdaily.org",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+  }),
+);
 
 app.use(express.json({ limit: "256kb" }));
 
@@ -41,13 +42,13 @@ app.get("/health", async (req, res) => {
 
     res.json({
       status: "ok",
-      database: "connected"
+      database: "connected",
     });
   } catch (error) {
     console.error("[HEALTH]", error);
     res.status(503).json({
       status: "error",
-      database: "disconnected"
+      database: "disconnected",
     });
   }
 });
@@ -93,7 +94,7 @@ app.post("/index", async (req, res) => {
     answers.length > 500
   ) {
     return res.status(400).json({
-      error: "Invalid prompt or answers"
+      error: "Invalid prompt or answers",
     });
   }
 
@@ -110,7 +111,7 @@ app.post("/index", async (req, res) => {
       !Object.hasOwn(SCORE_MAP, item.score)
     ) {
       return res.status(400).json({
-        error: "Invalid answer or score"
+        error: "Invalid answer or score",
       });
     }
 
@@ -120,8 +121,8 @@ app.post("/index", async (req, res) => {
     if (!existing || convertScore(item.score) > existing.score) {
       unique.set(answer, {
         answer,
-        score: convertScore(item.score)
-        });
+        score: convertScore(item.score),
+      });
     }
   }
 
@@ -132,18 +133,22 @@ app.post("/index", async (req, res) => {
 
     // Insert question if missing.
     // Preserve the existing question text otherwise.
-    await client.query(`
+    await client.query(
+      `
       INSERT INTO public.prompt (id, text)
       VALUES ($1, $2)
       ON CONFLICT (id) DO NOTHING
-    `, [promptId.trim(), question.trim()]);
+    `,
+      [promptId.trim(), question.trim()],
+    );
 
     let newAnswers = 0;
     let improvedAnswers = 0;
 
     for (const entry of unique.values()) {
       // Atomic upsert: never lower a known score.
-      const result = await client.query(`
+      const result = await client.query(
+        `
         INSERT INTO public.answer
           ("promptId", text, value)
         VALUES ($1, $2, $3)
@@ -155,7 +160,9 @@ app.post("/index", async (req, res) => {
           )
         WHERE public.answer.value < EXCLUDED.value
         RETURNING (xmax = 0) AS inserted
-      `, [promptId.trim(), entry.answer, entry.score]);
+      `,
+        [promptId.trim(), entry.answer, entry.score],
+      );
 
       if (result.rowCount > 0) {
         if (result.rows[0].inserted) {
@@ -170,8 +177,8 @@ app.post("/index", async (req, res) => {
 
     console.log(
       `[INDEX] ${question} | ` +
-      `${newAnswers} new | ` +
-      `${improvedAnswers} improved`
+        `${newAnswers} new | ` +
+        `${improvedAnswers} improved`,
     );
 
     res.json({
@@ -179,23 +186,76 @@ app.post("/index", async (req, res) => {
       promptId,
       received: unique.size,
       newAnswers,
-      improvedAnswers
+      improvedAnswers,
     });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("[INDEX]", error);
 
     res.status(500).json({
-      error: "Failed to index answers"
+      error: "Failed to index answers",
     });
   } finally {
     client.release();
   }
 });
 
+const POINTS = [4, 8, 16, 32, 64, 100];
+
+app.get("/helper/:promptId", async (req, res) => {
+  const { promptId } = req.params;
+
+  if (!promptId || promptId.length > 128) {
+    return res.status(400).json({
+      error: "Invalid prompt ID",
+    });
+  }
+
+  try {
+    const questionResult = await pool.query(
+      `SELECT id, text
+             FROM public.prompt
+             WHERE id = $1`,
+      [promptId],
+    );
+
+    if (questionResult.rows.length === 0) {
+      return res.status(404).json({
+        error: "Question not indexed",
+      });
+    }
+
+    const answerResult = await pool.query(
+      `SELECT text, value
+             FROM public.answer
+             WHERE "promptId" = $1
+             ORDER BY value DESC, text ASC
+             LIMIT 51`,
+      [promptId],
+    );
+
+    const answers = answerResult.rows.map((row) => ({
+      answer: row.text,
+      score: POINTS[row.value],
+      tier: row.value,
+    }));
+
+    res.json({
+      promptId,
+      question: questionResult.rows[0].text,
+      count: answers.length,
+      answers,
+    });
+  } catch (error) {
+    console.error("[HELPER]", error);
+
+    res.status(500).json({
+      error: "Failed to retrieve answers",
+    });
+  }
+});
+
 // Only listen on this computer.
 app.listen(PORT, "127.0.0.1", () => {
-  console.log(
-    `[Krillion API] http://127.0.0.1:${PORT}`
-  );
+  console.log(`[Krillion API] http://127.0.0.1:${PORT}`);
 });
