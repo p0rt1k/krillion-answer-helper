@@ -5,12 +5,12 @@ const cors = require("cors");
 const pool = require("./db");
 const OpenAI = require("openai");
 const openai = process.env.OPENAI_API_KEY
-    ? new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-        timeout: 10000,
-        maxRetries: 0
+  ? new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: 10000,
+      maxRetries: 0,
     })
-    : null;
+  : null;
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -88,9 +88,11 @@ app.get("/stats", async (req, res) => {
 
 // Index a prompt and its observed answers
 app.post("/index", async (req, res) => {
-  const { promptId, question, answers } = req.body || {};
+  const { promptId, question, category, answers } = req.body || {};
 
   if (
+    (category != null &&
+      (typeof category !== "string" || category.length > 128)) ||
     typeof promptId !== "string" ||
     !promptId.trim() ||
     promptId.length > 128 ||
@@ -140,14 +142,18 @@ app.post("/index", async (req, res) => {
     await client.query("BEGIN");
 
     // Insert question if missing.
-    // Preserve the existing question text otherwise.
+    // Preserve the existing question text otherwise,
+    // but fill in a missing category.
     await client.query(
       `
-      INSERT INTO public.prompt (id, text)
-      VALUES ($1, $2)
-      ON CONFLICT (id) DO NOTHING
+      INSERT INTO public.prompt (id, text, cat)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (id) DO UPDATE
+        SET cat = EXCLUDED.cat
+        WHERE public.prompt.cat IS NULL
+          AND EXCLUDED.cat IS NOT NULL
     `,
-      [promptId.trim(), question.trim()],
+      [promptId.trim(), question.trim(), category?.trim() || null],
     );
 
     let newAnswers = 0;
@@ -212,8 +218,10 @@ const POINTS = [4, 8, 16, 32, 64, 100];
 
 app.get("/helper/:promptId", async (req, res) => {
   const { promptId } = req.params;
+  const category =
+    typeof req.query.cat === "string" ? req.query.cat.trim() : "";
 
-  if (!promptId || promptId.length > 128) {
+  if (!promptId || promptId.length > 128 || category.length > 128) {
     return res.status(400).json({
       error: "Invalid prompt ID",
     });
@@ -221,38 +229,81 @@ app.get("/helper/:promptId", async (req, res) => {
 
   try {
     const questionResult = await pool.query(
-      `SELECT id, text
+      `SELECT id, text, cat
              FROM public.prompt
              WHERE id = $1`,
       [promptId],
     );
 
-    if (questionResult.rows.length === 0) {
-      return res.status(404).json({
-        error: "Question not indexed",
-      });
+    const prompt = questionResult.rows[0];
+
+    if (prompt) {
+      const answerResult = await pool.query(
+        `SELECT text, value
+               FROM public.answer
+               WHERE "promptId" = $1
+               ORDER BY value DESC, text ASC
+               LIMIT 51`,
+        [promptId],
+      );
+
+      if (answerResult.rows.length > 0) {
+        return res.json({
+          promptId,
+          question: prompt.text,
+          source: "prompt",
+          count: answerResult.rows.length,
+          answers: answerResult.rows.map((row) => ({
+            answer: row.text,
+            score: POINTS[row.value],
+            tier: row.value,
+          })),
+        });
+      }
     }
 
-    const answerResult = await pool.query(
-      `SELECT text, value
-             FROM public.answer
-             WHERE "promptId" = $1
-             ORDER BY value DESC, text ASC
-             LIMIT 51`,
-      [promptId],
-    );
+    // Unknown prompt: fall back to the best answer of
+    // each other prompt in the same category.
+    const fallbackCategory = prompt?.cat || category;
 
-    const answers = answerResult.rows.map((row) => ({
-      answer: row.text,
-      score: POINTS[row.value],
-      tier: row.value,
-    }));
+    if (fallbackCategory) {
+      const categoryResult = await pool.query(
+        `SELECT best.text,
+                MAX(best.value) AS value,
+                COUNT(*) AS prompts
+               FROM (
+                 SELECT DISTINCT ON (a."promptId")
+                        a.text, a.value
+                   FROM public.answer a
+                   JOIN public.prompt p ON p.id = a."promptId"
+                  WHERE p.cat = $1
+                    AND p.id <> $2
+                  ORDER BY a."promptId", a.value DESC, a.text ASC
+               ) best
+              GROUP BY best.text
+              ORDER BY value DESC, prompts DESC, best.text ASC
+              LIMIT 51`,
+        [fallbackCategory, promptId],
+      );
 
-    res.json({
-      promptId,
-      question: questionResult.rows[0].text,
-      count: answers.length,
-      answers,
+      if (categoryResult.rows.length > 0) {
+        return res.json({
+          promptId,
+          question: prompt?.text ?? null,
+          category: fallbackCategory,
+          source: "category",
+          count: categoryResult.rows.length,
+          answers: categoryResult.rows.map((row) => ({
+            answer: row.text,
+            score: POINTS[row.value],
+            tier: row.value,
+          })),
+        });
+      }
+    }
+
+    return res.status(404).json({
+      error: "Question not indexed",
     });
   } catch (error) {
     console.error("[HELPER]", error);
@@ -263,109 +314,97 @@ app.get("/helper/:promptId", async (req, res) => {
   }
 });
 
-
 const aiRequestTimes = [];
 
 app.post("/ai-answer", async (req, res) => {
-    if (
-        process.env.AI_FALLBACK_ENABLED !== "true" ||
-        !openai
-    ) {
-        return res.status(503).json({
-            error: "AI fallback is disabled"
-        });
+  if (process.env.AI_FALLBACK_ENABLED !== "true" || !openai) {
+    return res.status(503).json({
+      error: "AI fallback is disabled",
+    });
+  }
+
+  const { question } = req.body || {};
+
+  if (
+    typeof question !== "string" ||
+    question.trim().length < 5 ||
+    question.length > 500
+  ) {
+    return res.status(400).json({
+      error: "Invalid question",
+    });
+  }
+
+  // Reject requests from unrelated browser origins.
+  const origin = req.get("Origin");
+
+  if (origin && origin !== "https://playdaily.org") {
+    return res.status(403).json({
+      error: "Origin not allowed",
+    });
+  }
+
+  // Cost safeguard: at most 4 AI requests per minute.
+  const now = Date.now();
+
+  while (aiRequestTimes.length && now - aiRequestTimes[0] >= 60000) {
+    aiRequestTimes.shift();
+  }
+
+  if (aiRequestTimes.length >= 4) {
+    return res.status(429).json({
+      error: "AI rate limit reached",
+    });
+  }
+
+  aiRequestTimes.push(now);
+
+  try {
+    const response = await openai.responses.create({
+      model: process.env.OPENAI_MODEL || "gpt-5-mini",
+
+      instructions: [
+        "You are answering a short word game question.",
+        "Give exactly ONE ordinary, common answer.",
+        "Prioritize an obviously valid answer",
+        "over cleverness or rarity.",
+        "Return only the answer itself.",
+        "No explanation, quotation marks,",
+        "numbering, or punctuation around it.",
+        "Keep the answer under 80 characters.",
+      ].join(" "),
+
+      input: question.trim(),
+      max_output_tokens: 512,
+      store: false,
+    });
+
+    const answer = (response.output_text || "")
+      .trim()
+      .split(/\r?\n/)[0]
+      .replace(/^["'`]+|["'`]+$/g, "")
+      .trim();
+
+    if (!answer || answer.length > 80) {
+      return res.status(502).json({
+        error: "No usable AI answer",
+      });
     }
 
-    const { question } = req.body || {};
+    console.log(`[AI] ${question} => ${answer}`);
 
-    if (
-        typeof question !== "string" ||
-        question.trim().length < 5 ||
-        question.length > 500
-    ) {
-        return res.status(400).json({
-            error: "Invalid question"
-        });
-    }
+    return res.json({
+      answer,
+      source: "openai",
+    });
+  } catch (error) {
+    console.error("[AI]", error.message);
 
-    // Reject requests from unrelated browser origins.
-    const origin = req.get("Origin");
-
-    if (origin && origin !== "https://playdaily.org") {
-        return res.status(403).json({
-            error: "Origin not allowed"
-        });
-    }
-
-    // Cost safeguard: at most 4 AI requests per minute.
-    const now = Date.now();
-
-    while (
-        aiRequestTimes.length &&
-        now - aiRequestTimes[0] >= 60000
-    ) {
-        aiRequestTimes.shift();
-    }
-
-    if (aiRequestTimes.length >= 4) {
-        return res.status(429).json({
-            error: "AI rate limit reached"
-        });
-    }
-
-    aiRequestTimes.push(now);
-
-    try {
-        const response = await openai.responses.create({
-            model: process.env.OPENAI_MODEL ||
-                "gpt-5-mini",
-
-            instructions: [
-                "You are answering a short word game question.",
-                "Give exactly ONE ordinary, common answer.",
-                "Prioritize an obviously valid answer",
-                "over cleverness or rarity.",
-                "Return only the answer itself.",
-                "No explanation, quotation marks,",
-                "numbering, or punctuation around it.",
-                "Keep the answer under 80 characters."
-            ].join(" "),
-
-            input: question.trim(),
-            max_output_tokens: 512,
-            store: false
-        });
-
-        const answer = (response.output_text || "")
-            .trim()
-            .split(/\r?\n/)[0]
-            .replace(/^["'`]+|["'`]+$/g, "")
-            .trim();
-
-        if (!answer || answer.length > 80) {
-            return res.status(502).json({
-                error: "No usable AI answer"
-            });
-        }
-
-        console.log(
-            `[AI] ${question} => ${answer}`
-        );
-
-        return res.json({
-            answer,
-            source: "openai"
-        });
-
-    } catch (error) {
-        console.error("[AI]", error.message);
-
-        return res.status(502).json({
-            error: "AI request failed"
-        });
-    }
+    return res.status(502).json({
+      error: "AI request failed",
+    });
+  }
 });
-
 
 // Only listen on this computer.
 app.listen(PORT, "127.0.0.1", () => {

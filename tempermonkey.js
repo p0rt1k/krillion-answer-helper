@@ -122,6 +122,18 @@
     };
   }
 
+  function helperUrl(promptId, category) {
+    const url = new URL(
+      "http://127.0.0.1:3001/helper/" + encodeURIComponent(promptId),
+    );
+
+    if (typeof category === "string" && category.trim()) {
+      url.searchParams.set("cat", category.trim());
+    }
+
+    return url.toString();
+  }
+
   async function savePrompt(prompt, candidates, key) {
     if (!isClassicMatch(key)) {
       return;
@@ -168,6 +180,7 @@
     const payload = {
       promptId: prompt.id,
       question: prompt.text,
+      category: typeof prompt.cat === "string" ? prompt.cat : null,
       answers: pendingAnswers.map((item) => ({
         answer: item.answer,
         score: item.score,
@@ -1375,9 +1388,7 @@
       setAutoStatus("Loading answers...");
 
       try {
-        const response = await fetch(
-          "http://127.0.0.1:3001/helper/" + encodeURIComponent(prompt.id),
-        );
+        const response = await fetch(helperUrl(prompt.id, prompt.cat));
 
         if (!isAutoRoundActive(round)) {
           return;
@@ -1434,7 +1445,11 @@
           AUTO_DELAY - (Date.now() - round.startedAt),
         );
 
-        setAutoStatus(`Ready: ${round.answers.length} answers`);
+        setAutoStatus(
+          data.source === "category"
+            ? `Ready: ${round.answers.length} answers (category "${data.category}")`
+            : `Ready: ${round.answers.length} answers`,
+        );
 
         scheduleAutoAttempt(round, remainingDelay);
       } catch (error) {
@@ -1531,7 +1546,13 @@
       selectedMatch = key;
 
       for (const prompt of prompts) {
-        select.add(new Option(prompt.text, prompt.id));
+        const option = new Option(prompt.text, prompt.id);
+
+        if (typeof prompt.cat === "string") {
+          option.dataset.cat = prompt.cat;
+        }
+
+        select.add(option);
       }
 
       status.textContent = `${prompts.length} questions available`;
@@ -1629,6 +1650,7 @@
 
     async function loadAnswers() {
       const promptId = select.value;
+      const promptCat = select.selectedOptions[0]?.dataset.cat;
       const matchAtStart = selectedMatch;
       const currentRequest = ++requestId;
       if (panel.style.display !== "block") {
@@ -1645,9 +1667,7 @@
       status.textContent = "Loading answers...";
 
       try {
-        const response = await fetch(
-          "http://127.0.0.1:3001/helper/" + encodeURIComponent(promptId),
-        );
+        const response = await fetch(helperUrl(promptId, promptCat));
 
         if (
           currentRequest !== requestId ||
@@ -1677,7 +1697,10 @@
           return;
         }
 
-        status.textContent = `${data.answers.length} answers found`;
+        status.textContent =
+          data.source === "category"
+            ? `Not indexed — ${data.answers.length} answers from category "${data.category}"`
+            : `${data.answers.length} answers found`;
 
         const tierNames = [
           "Plankton",
