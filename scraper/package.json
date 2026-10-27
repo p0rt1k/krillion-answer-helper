@@ -1,0 +1,41 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node build/index.js",
+    "link:shared": "npm link @digitalidf/eventually-packages",
+    "update:shared": "npm i @digitalidf/eventually-packages@latest",
+    "tsc": "tsc",
+    "build": "tsc -p tsconfig.prod.json",
+    "dev": "ts-node-dev --files src/index.ts",
+    "knip": "npx knip"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7",
+    "async-mutex": "^0.5.0",
+    "axios": "^1.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "prisma": "^7",
+    "ts-node-dev": "^1.1.8",
+    "typescript": "^5.5.2"
+  },
+  "overrides": {
+    "brace-expansion": "^1.1.17",
+    "form-data": "^4.0.6",
+    "axios": {
+      "form-data": "^4.0.6"
+    },
+    "uuid": "^11.1.1"
+  },
+  "workspaces": [
+    "./*"
+  ]
+}

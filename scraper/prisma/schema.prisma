@@ -1,0 +1,27 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["views"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model prompt {
+  id   String  @id
+  text String  @unique
+  cat  String?
+
+  answers answer[]
+}
+
+model answer {
+  promptId String
+  text     String
+  value    Int
+
+  prompt prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@id([promptId, text])
+}
