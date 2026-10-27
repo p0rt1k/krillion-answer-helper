@@ -19,7 +19,11 @@ export async function addPrompts(prompts: Prisma.promptCreateManyInput[]) {
 export async function addAnswers(answers: Prisma.answerCreateManyInput[]) {
   const release = await mutex.acquire()
   try {
-    await prisma.answer.createMany({ data: answers, skipDuplicates: true })
+    await prisma.answer.createMany({
+      // PostgreSQL text columns cannot store NUL characters.
+      data: answers.map((answer) => ({ ...answer, text: answer.text.replace(/\u0000/g, '') })),
+      skipDuplicates: true
+    })
   } finally {
     release()
   }
