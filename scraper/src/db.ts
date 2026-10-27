@@ -10,7 +10,6 @@ export async function getAllPrompts() {
 }
 
 export async function addPrompts(prompts: Prisma.promptCreateManyInput[]) {
-  console.debug(prompts)
   prisma.$transaction(async (tx) => {
     await tx.prompt.deleteMany({ where: { id: { in: prompts.map((x) => x.id) } } })
     return tx.prompt.createMany({ data: prompts, skipDuplicates: true })
@@ -23,7 +22,10 @@ export async function addAnswers(answers: Prisma.answerCreateManyInput[]) {
     await prisma.answer.createMany({
       // PostgreSQL text columns cannot store NUL characters.
       data: answers
-        .filter((answer, index, self) => index === self.findIndex((o) => o.promptId === answer.promptId))
+        .filter(
+          (answer, index, self) =>
+            index === self.findIndex((o) => o.promptId === answer.promptId && o.text === answer.text)
+        )
         .map((answer) => ({ ...answer, text: answer.text.replace(/\u0000/g, '') })),
       skipDuplicates: true
     })
