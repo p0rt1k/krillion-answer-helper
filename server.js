@@ -3,6 +3,14 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
+const OpenAI = require("openai");
+const openai = process.env.OPENAI_API_KEY
+    ? new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+        timeout: 10000,
+        maxRetries: 0
+    })
+    : null;
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -254,6 +262,110 @@ app.get("/helper/:promptId", async (req, res) => {
     });
   }
 });
+
+
+const aiRequestTimes = [];
+
+app.post("/ai-answer", async (req, res) => {
+    if (
+        process.env.AI_FALLBACK_ENABLED !== "true" ||
+        !openai
+    ) {
+        return res.status(503).json({
+            error: "AI fallback is disabled"
+        });
+    }
+
+    const { question } = req.body || {};
+
+    if (
+        typeof question !== "string" ||
+        question.trim().length < 5 ||
+        question.length > 500
+    ) {
+        return res.status(400).json({
+            error: "Invalid question"
+        });
+    }
+
+    // Reject requests from unrelated browser origins.
+    const origin = req.get("Origin");
+
+    if (origin && origin !== "https://playdaily.org") {
+        return res.status(403).json({
+            error: "Origin not allowed"
+        });
+    }
+
+    // Cost safeguard: at most 4 AI requests per minute.
+    const now = Date.now();
+
+    while (
+        aiRequestTimes.length &&
+        now - aiRequestTimes[0] >= 60000
+    ) {
+        aiRequestTimes.shift();
+    }
+
+    if (aiRequestTimes.length >= 4) {
+        return res.status(429).json({
+            error: "AI rate limit reached"
+        });
+    }
+
+    aiRequestTimes.push(now);
+
+    try {
+        const response = await openai.responses.create({
+            model: process.env.OPENAI_MODEL ||
+                "gpt-5-mini",
+
+            instructions: [
+                "You are answering a short word game question.",
+                "Give exactly ONE ordinary, common answer.",
+                "Prioritize an obviously valid answer",
+                "over cleverness or rarity.",
+                "Return only the answer itself.",
+                "No explanation, quotation marks,",
+                "numbering, or punctuation around it.",
+                "Keep the answer under 80 characters."
+            ].join(" "),
+
+            input: question.trim(),
+            max_output_tokens: 512,
+            store: false
+        });
+
+        const answer = (response.output_text || "")
+            .trim()
+            .split(/\r?\n/)[0]
+            .replace(/^["'`]+|["'`]+$/g, "")
+            .trim();
+
+        if (!answer || answer.length > 80) {
+            return res.status(502).json({
+                error: "No usable AI answer"
+            });
+        }
+
+        console.log(
+            `[AI] ${question} => ${answer}`
+        );
+
+        return res.json({
+            answer,
+            source: "openai"
+        });
+
+    } catch (error) {
+        console.error("[AI]", error.message);
+
+        return res.status(502).json({
+            error: "AI request failed"
+        });
+    }
+});
+
 
 // Only listen on this computer.
 app.listen(PORT, "127.0.0.1", () => {

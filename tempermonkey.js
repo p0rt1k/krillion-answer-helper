@@ -15,6 +15,7 @@
   const DB_NAME = "krillion-answer-index";
   const STORE = "answers";
   const MAX_ARCHIVE = 50;
+  const AFK_THRESHOLD = 3;
 
   const matches = new Map();
   const pending = new Map();
@@ -939,6 +940,109 @@
 
     let autoRound = null;
 
+    const afk = {
+      matchKey: null,
+      firstRound: null,
+      lastRound: null,
+      unanswered: 0,
+      answeredRounds: new Set(),
+    };
+
+    function resetAfkStreak() {
+      afk.matchKey = null;
+      afk.firstRound = null;
+      afk.lastRound = null;
+      afk.unanswered = 0;
+      afk.answeredRounds.clear();
+    }
+
+    function trackAfkRound(matchKey, roundIndex) {
+      if (
+        !autoSwitch.checked ||
+        !Number.isInteger(roundIndex) ||
+        roundIndex < 0
+      ) {
+        return false;
+      }
+
+      // A new match starts a fresh streak.
+      if (afk.matchKey !== matchKey) {
+        resetAfkStreak();
+        afk.matchKey = matchKey;
+        afk.firstRound = roundIndex;
+        afk.lastRound = roundIndex;
+        return true;
+      }
+
+      // Ignore old cards still visible during animations.
+      if (roundIndex < afk.lastRound) {
+        return false;
+      }
+
+      // Same round, no additional counting.
+      if (roundIndex === afk.lastRound) {
+        return true;
+      }
+
+      const previous = afk.lastRound;
+
+      if (roundIndex === previous + 1) {
+        if (afk.answeredRounds.has(previous)) {
+          afk.unanswered = 0;
+        } else {
+          afk.unanswered++;
+        }
+      } else {
+        // Missed round transitions: don't guess.
+        afk.unanswered = 0;
+      }
+
+      afk.lastRound = roundIndex;
+
+      console.log(
+        `[Krillion AFK] Unanswered streak: ` +
+          `${afk.unanswered}/${AFK_THRESHOLD}`,
+      );
+
+      return true;
+    }
+
+    function trackAfkResults(matchKey, rows) {
+      if (!autoSwitch.checked || afk.matchKey !== matchKey) {
+        return;
+      }
+
+      const room = matchKey.slice(0, matchKey.lastIndexOf(":"));
+
+      const clientId = roomClientIds.get(room);
+
+      if (!clientId) {
+        return;
+      }
+
+      for (const row of rows) {
+        const answered =
+          row.i === clientId &&
+          Number.isInteger(row.r) &&
+          row.r >= afk.firstRound &&
+          [4, 8, 16, 32, 64, 100].includes(row.p);
+
+        if (!answered || afk.answeredRounds.has(row.r)) {
+          continue;
+        }
+
+        afk.answeredRounds.add(row.r);
+
+        // Only a confirmed scored answer resets the streak.
+        afk.unanswered = 0;
+
+        console.log(
+          `[Krillion AFK] Answer confirmed ` +
+            `in round ${row.r}. Streak reset.`,
+        );
+      }
+    }
+
     function setAutoStatus(message) {
       autoStatus.textContent = message;
     }
@@ -1121,6 +1225,117 @@
       scheduleAutoAttempt(round, RETRY_DELAY);
     }
 
+    function scheduleAIFallback(round) {
+      if (!isAutoRoundActive(round)) {
+        return;
+      }
+
+      // No fallback before six unanswered questions.
+      if (afk.unanswered < AFK_THRESHOLD) {
+        setAutoStatus("No database answers");
+        return;
+      }
+
+      // Never schedule the same question twice.
+      if (round.aiScheduled || round.aiAttempted) {
+        return;
+      }
+
+      round.aiScheduled = true;
+
+      // Keep the original five-second waiting period.
+      const delay = Math.max(0, AUTO_DELAY - (Date.now() - round.startedAt));
+
+      setAutoStatus("AI fallback scheduled");
+
+      round.timer = setTimeout(() => {
+        requestAIFallback(round).catch((error) => {
+          console.error("[Krillion AI]", error);
+        });
+      }, delay);
+    }
+
+    async function requestAIFallback(round) {
+      if (
+        !isAutoRoundActive(round) ||
+        round.aiAttempted ||
+        afk.unanswered < AFK_THRESHOLD
+      ) {
+        return;
+      }
+
+      // Set this BEFORE the API request.
+      // A failure must not cause another request
+      // for the same question.
+      round.aiAttempted = true;
+
+      setAutoStatus("Generating AI answer...");
+
+      try {
+        const response = await fetch("http://127.0.0.1:3001/ai-answer", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question: round.question,
+          }),
+        });
+
+        if (!isAutoRoundActive(round)) {
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        const answer =
+          typeof data.answer === "string" ? data.answer.trim() : "";
+
+        if (!answer || answer.length > 80) {
+          throw new Error("No usable AI answer");
+        }
+
+        // Prevent a late AI response from submitting
+        // to a different question.
+        const attempted = await submitGameAnswer(answer, () =>
+          isAutoRoundActive(round),
+        );
+
+        if (!isAutoRoundActive(round)) {
+          return;
+        }
+
+        if (attempted) {
+          round.tried.add(normalizeQuestion(answer));
+
+          setAutoStatus(`AI attempted: ${answer}`);
+
+          console.log(`[Krillion AI] Attempted: ${answer}`);
+        } else {
+          setAutoStatus("AI submission unavailable");
+        }
+
+        // No retry in this round, whether the
+        // answer was accepted or rejected.
+      } catch (error) {
+        console.warn(
+          `[Krillion AI] Failed for ` + `"${round.question}": ${error.message}`,
+        );
+
+        if (isAutoRoundActive(round)) {
+          setAutoStatus("AI failed. Skipping until next question.");
+        }
+
+        // Important:
+        // Do not reset the AFK streak.
+        // Do not schedule another attempt here.
+      }
+    }
+
     async function startAutoRound(matchKey, prompt, roundIndex) {
       // Don't restart a running cycle for the same prompt.
       if (
@@ -1169,7 +1384,7 @@
         }
 
         if (response.status === 404) {
-          setAutoStatus("Question not indexed");
+          scheduleAIFallback(round);
           return;
         }
 
@@ -1208,7 +1423,7 @@
         round.answers = [...unique.values()];
 
         if (!round.answers.length) {
-          setAutoStatus("No answers available");
+          scheduleAIFallback(round);
           return;
         }
 
@@ -1231,6 +1446,8 @@
     }
 
     function onAutoResults(key, rows) {
+      trackAfkResults(key, rows);
+
       const round = autoRound;
 
       if (!round || round.matchKey !== key || !isAutoRoundActive(round)) {
@@ -1279,6 +1496,7 @@
 
     autoSwitch.addEventListener("change", () => {
       stopAutoRound();
+      resetAfkStreak();
 
       if (!autoSwitch.checked) {
         setAutoStatus("Disabled");
@@ -1286,8 +1504,6 @@
       }
 
       setAutoStatus("Enabled");
-
-      // Begin with the question currently visible.
       detectActivePrompt(true);
     });
 
@@ -1589,7 +1805,7 @@
       // This runs independently of popup visibility.
       const roundIndex = prompts.findIndex((item) => item.id === prompt.id);
 
-      if (roundIndex !== -1) {
+      if (roundIndex !== -1 && trackAfkRound(matchKey, roundIndex)) {
         startAutoRound(matchKey, prompt, roundIndex).catch(console.error);
       }
 
