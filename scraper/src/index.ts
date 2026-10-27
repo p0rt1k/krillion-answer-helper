@@ -4,7 +4,6 @@ import { addAnswers, addPrompts, getAllPrompts } from './db'
 async function dealOne() {
   const saved = await getAllPrompts()
   const dealRes = (await deal(saved.map((x) => x.id))).data
-  console.log({ dealRes })
   await addPrompts(dealRes.prompts)
   for (const promptId in dealRes.tickets) {
     const ticket = dealRes.tickets[promptId]
