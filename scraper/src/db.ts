@@ -1,3 +1,4 @@
+import { error } from 'node:console'
 import prisma from './db/prisma'
 import { Prisma } from './generated/prisma/client'
 import { Mutex } from 'async-mutex'
@@ -21,9 +22,13 @@ export async function addAnswers(answers: Prisma.answerCreateManyInput[]) {
   try {
     await prisma.answer.createMany({
       // PostgreSQL text columns cannot store NUL characters.
-      data: answers.map((answer) => ({ ...answer, text: answer.text.replace(/\u0000/g, '') })),
+      data: answers
+        .filter((answer, index, self) => index === self.findIndex((o) => o.promptId === answer.promptId))
+        .map((answer) => ({ ...answer, text: answer.text.replace(/\u0000/g, '') })),
       skipDuplicates: true
     })
+  } catch (error) {
+    console.error(error, answers)
   } finally {
     release()
   }
