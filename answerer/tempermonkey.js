@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Krillion Answer Indexer
 // @namespace    krillion-local-indexer
-// @version      0.2
+// @version      0.3
 // @description  Index best answers and 50 alternatives
 // @match        https://playdaily.org/krillion*
 // @icon         https://krillion.io/tiers/krillion-halloween-2026.png
@@ -11,6 +11,11 @@
 
 (() => {
   "use strict";
+
+  // Chat-bot command prefix: players type "/<BOT_PREFIX> <command>".
+  const BOT_PREFIX = "portik";
+  // Shorter prefixes that work the same way, e.g. "/p ans".
+  const BOT_PREFIX_ALIASES = ["p"];
 
   const DB_NAME = "krillion-answer-index";
   const STORE = "answers";
@@ -23,6 +28,7 @@
   const inFlightAnswers = new Set();
   const roomModes = new Map();
   const roomClientIds = new Map();
+  let currentRoom = null;
 
   function isClassicMatch(key) {
     const separator = key.lastIndexOf(":");
@@ -122,13 +128,17 @@
     };
   }
 
-  function helperUrl(promptId, category) {
+  function helperUrl(promptId, category, { worst = false } = {}) {
     const url = new URL(
       "http://127.0.0.1:3001/helper/" + encodeURIComponent(promptId),
     );
 
     if (typeof category === "string" && category.trim()) {
       url.searchParams.set("cat", category.trim());
+    }
+
+    if (worst) {
+      url.searchParams.set("worst", "1");
     }
 
     return url.toString();
@@ -372,13 +382,15 @@
         return;
       }
 
+      currentRoom = room;
+
       if (rpc === "krillion_arena_touch_seat") {
         roomModes.set(room, "classic");
         if (typeof payload.p_client_id === "string") {
           roomClientIds.set(room, payload.p_client_id);
         }
         console.log(`[Krillion] Classic room verified: ${room}`);
-        window.krillionAuto?.onSeatVerified();
+        window.krillionAuto?.onSeatVerified(room);
       } else {
         roomModes.set(room, "other");
         roomClientIds.delete(room);
@@ -841,7 +853,7 @@
             cursor: pointer;
         }
 
-        #kh-root #kh-auto-switch {
+        #kh-root .kh-switch {
             position: absolute;
             width: 1px;
             height: 1px;
@@ -871,16 +883,16 @@
             transition: transform 150ms ease;
         }
 
-        #kh-root #kh-auto-switch:checked + .kh-auto-track {
+        #kh-root .kh-switch:checked + .kh-auto-track {
             background: #238c64;
             border-color: #5ad07a;
         }
 
-        #kh-root #kh-auto-switch:checked + .kh-auto-track::before {
+        #kh-root .kh-switch:checked + .kh-auto-track::before {
             transform: translateX(22px);
         }
 
-        #kh-root #kh-auto-switch:focus-visible + .kh-auto-track {
+        #kh-root .kh-switch:focus-visible + .kh-auto-track {
             outline: 2px solid #ffd166;
             outline-offset: 3px;
         }
@@ -900,6 +912,19 @@
 
                 <input
                     id="kh-auto-switch"
+                    class="kh-switch"
+                    type="checkbox"
+                    role="switch"
+                >
+
+                <span class="kh-auto-track"></span>
+            </label>
+            <label class="kh-auto-control">
+                <span>CHAT-BOT</span>
+
+                <input
+                    id="kh-chatbot-switch"
+                    class="kh-switch"
                     type="checkbox"
                     role="switch"
                 >
@@ -947,9 +972,19 @@
 
     const autoSwitch = root.querySelector("#kh-auto-switch");
     const autoStatus = root.querySelector("#kh-auto-status");
+    const chatBotSwitch = root.querySelector("#kh-chatbot-switch");
 
     const AUTO_DELAY = 5000;
     const RETRY_DELAY = 2500;
+
+    const TIER_NAMES = [
+      "Plankton",
+      "Too Clever",
+      "Schooler",
+      "Rare",
+      "Deep Cut",
+      "One in a Krillion",
+    ];
 
     let autoRound = null;
 
@@ -1500,7 +1535,9 @@
     // Expose only the result notification hook.
     window.krillionAuto = {
       onResults: onAutoResults,
-      onSeatVerified() {
+      onSeatVerified(room) {
+        scheduleWelcome(room);
+
         if (autoSwitch.checked) {
           detectActivePrompt(true);
         }
@@ -1521,6 +1558,775 @@
       setAutoStatus("Enabled");
       detectActivePrompt(true);
     });
+
+    // ===== CHAT-BOT =====
+
+    const BOT_COMMAND = `/${BOT_PREFIX}`;
+    const ESCAPED_PREFIX = [BOT_PREFIX, ...BOT_PREFIX_ALIASES]
+      .map((prefix) => prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+    const CHAT_PREFIX = new RegExp(
+      `^\\/(?:${ESCAPED_PREFIX})(?:\\s+(\\S+))?(?:\\s|$)`,
+      "i",
+    );
+    const CHAT_SAY = new RegExp(
+      `^\\/(?:${ESCAPED_PREFIX})\\s+say\\s+(.+)$`,
+      "i",
+    );
+    const CHAT_COMMANDS = [
+      "ans",
+      "say",
+      "mute",
+      "unmute",
+      "stats",
+      "about",
+      "help",
+    ];
+    // Alternative command words, e.g. "/p answer" works like "/p ans".
+    const CHAT_COMMAND_ALIASES = { answer: "ans" };
+    const CHAT_MAX_LENGTH = 200; // Krillion's CHAT_MAX_LENGTH
+    const CHAT_GAP = 5000; // Krillion requires at least 2200ms between messages
+    const CHAT_REFUSED_TEXT = "That message wasn't sent. Keep the chat friendly.";
+    // Krillion shows its refusal notice at most once per 4000ms.
+    const CHAT_REFUSED_NOTICE_GAP = 4000;
+    // Pause before sending anything after a refused message.
+    const CHAT_REFUSED_PAUSE = 5000;
+    // A mute only blocks the "ans" command.
+    const CHAT_MUTE_MS = 3 * 60 * 1000;
+    // Nobody can mute again until answers were back this long.
+    const CHAT_MUTE_COOLDOWN = 5 * 60 * 1000;
+    const CHAT_UNMUTE_COOLDOWN = 10 * 60 * 1000;
+    // The player whose mute took effect gets the worst answers until
+    // this long after the mute ends (expired or unmuted).
+    const CHAT_MUTE_PENALTY_MS = 5 * 60 * 1000;
+    const CHAT_MUTE_TAUNT_DELAY = 5000;
+    const CHAT_USER_COOLDOWN = 10000;
+    // Identical command text from anyone is ignored for this long.
+    const CHAT_DUPLICATE_COOLDOWN = 7000;
+    const CHAT_QUEUE_LIMIT = 5;
+    // More new lines than this in one scan means a history load or re-render.
+    const CHAT_BULK_LIMIT = 5;
+    // How long the last seen question stays valid after its card is hidden.
+    const LAST_PROMPT_MAX_AGE = 2 * 60 * 1000;
+    const CHAT_HELP =
+      `cmds for ${BOT_COMMAND}` +
+      (BOT_PREFIX_ALIASES.length
+        ? ` (or /${BOT_PREFIX_ALIASES[0]}):`
+        : ":") +
+      " ans - the answer" +
+      " | say <text> - I repeat it" +
+      ` | mute - no answers ${formatWait(CHAT_MUTE_MS)}` +
+      ` | unmute - answers back (every ${formatWait(CHAT_UNMUTE_COOLDOWN)})` +
+      " | stats - bot stats" +
+      " | about - who I am";
+    // No punctuation right after commands: players copy "help!" literally.
+    const WELCOME_MESSAGE =
+      "Hi, I'm an answer bot - I can tell you an answer for the current " +
+      `question. Type ${BOT_COMMAND} help to see what I can do`;
+    const CHAT_ABOUT =
+      "I'm an answer bot. I remember answers from past rounds and can " +
+      "give you a top answer for the current question. " +
+      `Ask with ${BOT_COMMAND} ans, all commands: ${BOT_COMMAND} help`;
+    const WELCOME_DELAY = 5000;
+    const WELCOME_REPEAT = 15 * 60 * 1000;
+
+    const seenChatLines = new WeakSet();
+    const knownChatLogs = new WeakSet();
+    const chatUserLastCommand = new Map();
+    const chatCommandLastAccepted = new Map();
+    let chatLastMuter = null;
+    const chatQueue = [];
+    let chatSending = false;
+    let chatMutedUntil = -Infinity;
+    let chatLastUnmuteAt = -Infinity;
+    let lastChatSentAt = 0;
+    let chatPausedUntil = 0;
+    let lastChatRefusalAt = -Infinity;
+    let chatScanTimer = null;
+
+    // Session statistics for "/<prefix> stats" (reset on page reload).
+    const chatStats = {
+      enabledAt: null,
+      answersGiven: 0,
+      interactions: 0,
+      users: new Set(),
+    };
+
+    function formatUptime(ms) {
+      const total = Math.floor(ms / 1000);
+      const days = Math.floor(total / 86400);
+      const hours = Math.floor((total % 86400) / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const seconds = total % 60;
+
+      if (days) return `${days}d ${hours}h ${minutes}m`;
+      if (hours) return `${hours}h ${minutes}m`;
+      if (minutes) return `${minutes}m ${seconds}s`;
+      return `${seconds}s`;
+    }
+
+    function describeStats() {
+      const uptime = chatStats.enabledAt
+        ? formatUptime(Date.now() - chatStats.enabledAt)
+        : "0s";
+
+      return (
+        `uptime ${uptime}` +
+        ` | answers given ${chatStats.answersGiven}` +
+        ` | unique users ${chatStats.users.size}` +
+        ` | interactions ${chatStats.interactions}`
+      );
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    function isAnswersMuted() {
+      return Date.now() < chatMutedUntil;
+    }
+
+    function formatWait(ms) {
+      const seconds = Math.max(1, Math.ceil(ms / 1000));
+
+      return seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`;
+    }
+
+    function setReactInputValue(input, value) {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+
+      if (setter) {
+        setter.call(input, value);
+      } else {
+        input.value = value;
+      }
+
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    function getChatControls() {
+      for (const form of document.querySelectorAll("form.kr-chat-bar")) {
+        const field = form.querySelector("input.kr-chat-field");
+
+        if (field && !field.disabled && !field.readOnly) {
+          return {
+            form,
+            field,
+            button: form.querySelector(".kr-chat-send"),
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function getRefusalNotices() {
+      return [...document.querySelectorAll(".kr-chat-sys")].filter(
+        (line) => line.textContent.trim() === CHAT_REFUSED_TEXT,
+      );
+    }
+
+    // Resolves to "sent", "refused" (blocked by Krillion's chat filter)
+    // or "failed" (chat unavailable).
+    async function sendChatMessage(text) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const wait =
+          Math.max(lastChatSentAt + CHAT_GAP, chatPausedUntil) - Date.now();
+
+        if (wait > 0) {
+          await sleep(wait);
+        }
+
+        if (!chatBotSwitch.checked) {
+          return "failed";
+        }
+
+        const controls = getChatControls();
+
+        if (!controls || controls.button?.hasAttribute("data-cooling")) {
+          await sleep(1000);
+          continue;
+        }
+
+        const { form, field } = controls;
+
+        // Preserve anything the user is typing in chat.
+        const draft = field.value === text ? "" : field.value;
+        const noticesBefore = new Set(getRefusalNotices());
+
+        setReactInputValue(field, text);
+
+        // Allow React to apply the new draft.
+        await sleep(50);
+
+        form.requestSubmit();
+
+        await sleep(150);
+
+        // Krillion clears the field only when the send is accepted.
+        const sent = field.value !== text;
+
+        if (field.isConnected && (draft || !sent)) {
+          setReactInputValue(field, draft);
+        }
+
+        if (sent) {
+          lastChatSentAt = Date.now();
+          return "sent";
+        }
+
+        // The notice is skipped when the last refusal was under 4s ago.
+        const now = Date.now();
+        const refused =
+          getRefusalNotices().some((line) => !noticesBefore.has(line)) ||
+          now - lastChatRefusalAt < CHAT_REFUSED_NOTICE_GAP;
+
+        if (refused) {
+          lastChatRefusalAt = now;
+          return "refused";
+        }
+
+        // Rejected silently: we sent too soon, so wait and try again.
+        lastChatSentAt = now;
+      }
+
+      return "failed";
+    }
+
+    async function pumpChatQueue() {
+      if (chatSending) {
+        return;
+      }
+
+      chatSending = true;
+
+      try {
+        while (chatQueue.length && chatBotSwitch.checked) {
+          const { text, kind, fallback, knownAnswer, onSent } =
+            chatQueue.shift();
+
+          // Answers queued before a mute are dropped.
+          if (kind === "ans" && isAnswersMuted()) {
+            continue;
+          }
+
+          let result = await sendChatMessage(text);
+          let finalText = text;
+
+          // The player's name may be what tripped the filter.
+          if (result === "refused" && fallback) {
+            console.log(`[Krillion Chat-Bot] Refused, retrying without name`);
+            finalText = fallback;
+            result = await sendChatMessage(fallback);
+          }
+
+          if (result === "refused") {
+            chatPausedUntil = Date.now() + CHAT_REFUSED_PAUSE;
+          }
+
+          if (result === "sent" && knownAnswer) {
+            chatStats.answersGiven++;
+          }
+
+          if (result === "sent") {
+            onSent?.();
+          }
+
+          console.log(`[Krillion Chat-Bot] ${result}: ${finalText}`);
+        }
+      } finally {
+        chatSending = false;
+      }
+    }
+
+    function enqueueChat(
+      text,
+      kind = "info",
+      { fallback = null, knownAnswer = false, onSent = null } = {},
+    ) {
+      if (
+        !chatBotSwitch.checked ||
+        (kind === "ans" && isAnswersMuted()) ||
+        chatQueue.length >= CHAT_QUEUE_LIMIT
+      ) {
+        return;
+      }
+
+      chatQueue.push({
+        text: text.slice(0, CHAT_MAX_LENGTH),
+        kind,
+        fallback: fallback && fallback.slice(0, CHAT_MAX_LENGTH),
+        knownAnswer,
+        onSent,
+      });
+      pumpChatQueue().catch(console.error);
+    }
+
+    // Answers mention the asker, with a nameless fallback for the filter.
+    function enqueueAnswer(name, body, options = {}) {
+      enqueueChat(`${name} ${body}`, "ans", { ...options, fallback: body });
+    }
+
+    // Current verified Classic prompt. The question card is hidden once
+    // we've answered, so fall back to the last prompt seen this match.
+    function findVisiblePrompt() {
+      const active = [...matches.entries()]
+        .reverse()
+        .find(([key]) => isClassicMatch(key));
+
+      if (!active) {
+        console.warn("[Krillion Chat-Bot] No verified Classic match", {
+          rooms: Object.fromEntries(roomModes),
+          matches: [...matches.keys()],
+        });
+        return null;
+      }
+
+      const [matchKey, prompts] = active;
+      const question = getVisibleQuestion();
+
+      if (question) {
+        const prompt = prompts.find(
+          (item) => normalizeQuestion(item.text) === question,
+        );
+
+        if (prompt) {
+          return prompt;
+        }
+      }
+
+      if (
+        !question &&
+        lastSeenPrompt?.matchKey === matchKey &&
+        Date.now() - lastSeenPrompt.seenAt < LAST_PROMPT_MAX_AGE
+      ) {
+        return lastSeenPrompt.prompt;
+      }
+
+      console.warn("[Krillion Chat-Bot] Question not recognized", {
+        visibleQuestion: question || null,
+        matchKey,
+        lineup: prompts.map((item) => item.text),
+        lastSeen: lastSeenPrompt
+          ? {
+              matchKey: lastSeenPrompt.matchKey,
+              question: lastSeenPrompt.prompt.text,
+              ageSeconds: Math.round((Date.now() - lastSeenPrompt.seenAt) / 1000),
+            }
+          : null,
+      });
+
+      return null;
+    }
+
+    // Without a lineup match (e.g. the page loaded mid-match), look the
+    // question up in the database by its on-screen text instead.
+    async function resolvePrompt() {
+      const prompt = findVisiblePrompt();
+
+      if (prompt) {
+        return prompt;
+      }
+
+      const text =
+        getVisibleQuestion() ||
+        (lastSeenQuestion &&
+        Date.now() - lastSeenQuestion.seenAt < LAST_PROMPT_MAX_AGE
+          ? lastSeenQuestion.text
+          : "");
+
+      if (!text) {
+        return null;
+      }
+
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:3001/prompt-lookup?q=" + encodeURIComponent(text),
+        );
+
+        if (!response.ok) {
+          console.warn(
+            `[Krillion Chat-Bot] Text lookup HTTP ${response.status} for "${text}"`,
+          );
+          return null;
+        }
+
+        const data = await response.json();
+
+        return typeof data.id === "string"
+          ? { id: data.id, text: data.text, cat: data.cat }
+          : null;
+      } catch (error) {
+        console.warn("[Krillion Chat-Bot] Text lookup failed:", error);
+        return null;
+      }
+    }
+
+    async function replyWithAnswer(name) {
+      const notSure = "I am not sure...";
+      // Players who recently used mute get the lowest-scoring answer.
+      // chatMutedUntil is when the last mute ended (or will end).
+      const worst =
+        name === chatLastMuter &&
+        Date.now() < chatMutedUntil + CHAT_MUTE_PENALTY_MS;
+      const prompt = await resolvePrompt();
+
+      if (!prompt) {
+        enqueueAnswer(name, notSure);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          helperUrl(prompt.id, prompt.cat, { worst }),
+        );
+
+        if (!response.ok) {
+          console.warn(
+            `[Krillion Chat-Bot] Helper returned HTTP ${response.status} for "${prompt.text}"`,
+          );
+          enqueueAnswer(name, notSure);
+          return;
+        }
+
+        const data = await response.json();
+
+        // Category fallbacks are guesses, not known answers.
+        const answers =
+          data.source === "prompt"
+            ? (data.answers || []).filter(
+                (item) =>
+                  typeof item.answer === "string" &&
+                  item.answer.trim() &&
+                  Number.isFinite(item.score),
+              )
+            : [];
+
+        if (!answers.length) {
+          console.warn(
+            `[Krillion Chat-Bot] No known answers (source: ${data.source}) for "${prompt.text}"`,
+          );
+          enqueueAnswer(name, notSure);
+          return;
+        }
+
+        const target = (worst ? Math.min : Math.max)(
+          ...answers.map((item) => item.score),
+        );
+        const tied = answers.filter((item) => item.score === target);
+        const pick = tied[Math.floor(Math.random() * tied.length)];
+        const rarity = TIER_NAMES[pick.tier] || `${pick.score} pts`;
+
+        enqueueAnswer(name, `I know! its ${pick.answer.trim()} (${rarity})`, {
+          knownAnswer: true,
+          // Tell the muter why their answer was bad.
+          onSent: worst
+            ? () =>
+                setTimeout(
+                  () => enqueueChat(`${name} thats for muting me :(`),
+                  CHAT_MUTE_TAUNT_DELAY,
+                )
+            : null,
+        });
+      } catch (error) {
+        console.warn("[Krillion Chat-Bot] Lookup failed:", error);
+        enqueueAnswer(name, notSure);
+      }
+    }
+
+    function readChatLine(line) {
+      const nameElement = line.querySelector(":scope > b");
+
+      if (!nameElement) {
+        return null;
+      }
+
+      let body = "";
+      let afterName = false;
+
+      for (const node of line.childNodes) {
+        if (node === nameElement) {
+          afterName = true;
+        } else if (afterName) {
+          body += node.textContent;
+        }
+      }
+
+      return {
+        name: nameElement.textContent.trim() || "friend",
+        body: body.trim(),
+      };
+    }
+
+    function handleChatLine(line) {
+      // Never react to our own messages.
+      if (line.closest("[data-mine]")) {
+        return;
+      }
+
+      const message = readChatLine(line);
+      const command = message && CHAT_PREFIX.exec(message.body);
+
+      if (!command) {
+        return;
+      }
+
+      const word = (command[1] || "help").toLowerCase();
+      const action = CHAT_COMMAND_ALIASES[word] || word;
+
+      if (!CHAT_COMMANDS.includes(action)) {
+        return;
+      }
+
+      // A mute only silences answers; other commands keep working.
+      if (action === "ans" && isAnswersMuted()) {
+        return;
+      }
+
+      const sayText =
+        action === "say" ? CHAT_SAY.exec(message.body)?.[1].trim() : null;
+
+      if (action === "say" && !sayText) {
+        return;
+      }
+
+      const now = Date.now();
+      // Prefix and command aliases count as the same command, so
+      // "/p answer" and "/portik ans" are identical here.
+      const commandText = `${BOT_COMMAND} ${action} ${message.body.slice(
+        command[0].length,
+      )}`
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+
+      if (
+        now - (chatUserLastCommand.get(message.name) || 0) <
+          CHAT_USER_COOLDOWN ||
+        now - (chatCommandLastAccepted.get(commandText) || 0) <
+          CHAT_DUPLICATE_COOLDOWN
+      ) {
+        return;
+      }
+
+      chatUserLastCommand.set(message.name, now);
+      chatCommandLastAccepted.set(commandText, now);
+      chatStats.interactions++;
+      chatStats.users.add(message.name);
+
+      console.log(
+        `[Krillion Chat-Bot] ${message.name}: ${BOT_COMMAND} ${action}`,
+      );
+
+      if (action === "ans") {
+        replyWithAnswer(message.name).catch(console.error);
+      } else if (action === "say") {
+        enqueueChat(sayText);
+      } else if (action === "stats") {
+        enqueueChat(`${message.name} ${describeStats()}`);
+      } else if (action === "about") {
+        enqueueChat(`${message.name} ${CHAT_ABOUT}`);
+      } else if (action === "help") {
+        enqueueChat(`${message.name} ${CHAT_HELP}`);
+      } else if (action === "mute") {
+        handleMute(message.name, now);
+      } else {
+        handleUnmute(message.name, now);
+      }
+    }
+
+    function handleMute(name, now) {
+      if (now < chatMutedUntil) {
+        enqueueChat(
+          `${name} answers are already muted ` +
+            `(${formatWait(chatMutedUntil - now)} left).`,
+        );
+        return;
+      }
+
+      // chatMutedUntil is also when answers came back after an unmute.
+      const remuteAt = chatMutedUntil + CHAT_MUTE_COOLDOWN;
+
+      if (now < remuteAt) {
+        enqueueChat(
+          `${name} I was muted recently, ` +
+            `mute is available again in ${formatWait(remuteAt - now)}.`,
+        );
+        return;
+      }
+
+      chatMutedUntil = now + CHAT_MUTE_MS;
+      chatLastMuter = name;
+
+      enqueueChat(
+        `${name} OK, no answers for ${formatWait(CHAT_MUTE_MS)}. ` +
+          `Other commands still work.`,
+      );
+    }
+
+    function handleUnmute(name, now) {
+      if (now >= chatMutedUntil) {
+        enqueueChat(`${name} answers are not muted.`);
+        return;
+      }
+
+      const unmuteAt = chatLastUnmuteAt + CHAT_UNMUTE_COOLDOWN;
+
+      if (now < unmuteAt) {
+        enqueueChat(
+          `${name} unmute was used recently, ` +
+            `try again in ${formatWait(unmuteAt - now)}.`,
+        );
+        return;
+      }
+
+      chatMutedUntil = now;
+      chatLastUnmuteAt = now;
+
+      enqueueChat(
+        `${name} OK, answers are back! Try ${BOT_COMMAND} ans.`,
+      );
+    }
+
+    function scanChat(handle = chatBotSwitch.checked) {
+      const logEntries = [];
+
+      for (const log of document.querySelectorAll(".kr-chat-log")) {
+        const fresh = [...log.querySelectorAll("p.kr-chat-said")].filter(
+          (line) => !seenChatLines.has(line),
+        );
+
+        for (const line of fresh) {
+          seenChatLines.add(line);
+        }
+
+        // A newly mounted log only contains history.
+        if (!knownChatLogs.has(log)) {
+          knownChatLogs.add(log);
+          continue;
+        }
+
+        if (fresh.length > CHAT_BULK_LIMIT) {
+          continue;
+        }
+
+        const at = new Date().toISOString();
+
+        for (const line of fresh) {
+          const message = readChatLine(line);
+
+          if (message?.body) {
+            logEntries.push({ at, name: message.name, message: message.body });
+          }
+
+          if (handle) {
+            handleChatLine(line);
+          }
+        }
+      }
+
+      if (logEntries.length) {
+        saveChatLog(logEntries);
+      }
+    }
+
+    // Only player messages (p.kr-chat-said) are logged, never system lines.
+    function saveChatLog(lines) {
+      fetch("http://127.0.0.1:3001/chat-log", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ room: currentRoom, lines }),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        })
+        .catch((error) => {
+          console.warn("[Krillion Chat-Log] Save failed:", error.message);
+        });
+    }
+
+    let welcomedRoom = null;
+    let welcomeTimer = null;
+
+    // Greet 5 seconds after joining a room, then every 15 minutes
+    // while we stay in that room with the CHAT-BOT on.
+    function scheduleWelcome(room) {
+      if (!chatBotSwitch.checked || !room || welcomedRoom === room) {
+        return;
+      }
+
+      clearTimeout(welcomeTimer);
+      welcomedRoom = room;
+
+      const sendWelcome = () => {
+        if (
+          !chatBotSwitch.checked ||
+          currentRoom !== room ||
+          welcomedRoom !== room
+        ) {
+          welcomedRoom = null;
+          return;
+        }
+
+        if (getChatControls()) {
+          enqueueChat(WELCOME_MESSAGE);
+        }
+
+        welcomeTimer = setTimeout(sendWelcome, WELCOME_REPEAT);
+      };
+
+      welcomeTimer = setTimeout(sendWelcome, WELCOME_DELAY);
+    }
+
+    function isChatMutation(mutation) {
+      return (
+        mutation.type === "childList" &&
+        [...mutation.addedNodes].some(
+          (node) =>
+            node.nodeType === Node.ELEMENT_NODE &&
+            (node.matches?.(".kr-chat-log, .kr-said, .kr-chat-said") ||
+              node.querySelector?.(".kr-chat-log, .kr-chat-said")),
+        )
+      );
+    }
+
+    const chatObserver = new MutationObserver((mutations) => {
+      if (!mutations.some(isChatMutation)) {
+        return;
+      }
+
+      clearTimeout(chatScanTimer);
+      chatScanTimer = setTimeout(scanChat, 50);
+    });
+
+    chatObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Treat everything already in chat as history.
+    scanChat(false);
+
+    chatBotSwitch.checked = false;
+
+    chatBotSwitch.addEventListener("change", () => {
+      chatQueue.length = 0;
+      chatStats.enabledAt = chatBotSwitch.checked ? Date.now() : null;
+
+      // Ignore commands sent while the bot was off.
+      scanChat(false);
+
+      console.log(
+        `[Krillion Chat-Bot] ${chatBotSwitch.checked ? "Enabled" : "Disabled"}`,
+      );
+    });
+
+    // ===== END CHAT-BOT =====
 
     let selectedMatch = null;
     let requestId = 0;
@@ -1702,15 +2508,6 @@
             ? `Not indexed — ${data.answers.length} answers from category "${data.category}"`
             : `${data.answers.length} answers found`;
 
-        const tierNames = [
-          "Plankton",
-          "Too Clever",
-          "Schooler",
-          "Rare",
-          "Deep Cut",
-          "One in a Krillion",
-        ];
-
         for (const item of data.answers) {
           const button = document.createElement("button");
 
@@ -1726,7 +2523,7 @@
 
           const tierLabel = document.createElement("div");
           tierLabel.className = "kh-answer-tier";
-          tierLabel.textContent = tierNames[item.tier] || "Unknown";
+          tierLabel.textContent = TIER_NAMES[item.tier] || "Unknown";
 
           info.append(name, tierLabel);
 
@@ -1774,6 +2571,8 @@
     }
 
     let lastDetectedPrompt = null;
+    let lastSeenPrompt = null;
+    let lastSeenQuestion = null;
     let detectionTimer = null;
 
     function detectActivePrompt(force = false) {
@@ -1795,6 +2594,8 @@
         return;
       }
 
+      lastSeenQuestion = { text: questionText, seenAt: Date.now() };
+
       // Find the currently verified Classic match.
       const active = [...matches.entries()]
         .reverse()
@@ -1814,6 +2615,8 @@
       if (!prompt) {
         return;
       }
+
+      lastSeenPrompt = { matchKey, prompt, seenAt: Date.now() };
 
       const detectedKey = `${matchKey}:${prompt.id}`;
 
@@ -1949,5 +2752,5 @@
     createAnswerHelper();
   }
 
-  console.log("[Krillion] Indexer v0.2 active");
+  console.log("[Krillion] Indexer v0.3 active");
 })();

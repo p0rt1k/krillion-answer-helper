@@ -1,5 +1,7 @@
 require("dotenv").config({ path: require("node:path").resolve(__dirname, "../.env") });
 
+const fs = require("node:fs/promises");
+const path = require("node:path");
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
@@ -220,6 +222,8 @@ app.get("/helper/:promptId", async (req, res) => {
   const { promptId } = req.params;
   const category =
     typeof req.query.cat === "string" ? req.query.cat.trim() : "";
+  // ?worst=1 lists the lowest-scoring answers first.
+  const order = req.query.worst === "1" ? "ASC" : "DESC";
 
   if (!promptId || promptId.length > 128 || category.length > 128) {
     return res.status(400).json({
@@ -242,7 +246,7 @@ app.get("/helper/:promptId", async (req, res) => {
         `SELECT text, value
                FROM public.answer
                WHERE "promptId" = $1
-               ORDER BY value DESC, text ASC
+               ORDER BY value ${order}, text ASC
                LIMIT 51`,
         [promptId],
       );
@@ -311,6 +315,37 @@ app.get("/helper/:promptId", async (req, res) => {
     res.status(500).json({
       error: "Failed to retrieve answers",
     });
+  }
+});
+
+// Find a prompt by its question text (whitespace/case-insensitive).
+app.get("/prompt-lookup", async (req, res) => {
+  const text =
+    typeof req.query.q === "string"
+      ? req.query.q.trim().replace(/\s+/g, " ").toLowerCase()
+      : "";
+
+  if (!text || text.length > 2000) {
+    return res.status(400).json({ error: "Invalid question" });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT id, text, cat
+         FROM public.prompt
+        WHERE lower(regexp_replace(btrim(text), '\\s+', ' ', 'g')) = $1
+        LIMIT 1`,
+      [text],
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Question not indexed" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("[PROMPT-LOOKUP]", error);
+    res.status(500).json({ error: "Failed to look up question" });
   }
 });
 
@@ -403,6 +438,71 @@ app.post("/ai-answer", async (req, res) => {
     return res.status(502).json({
       error: "AI request failed",
     });
+  }
+});
+
+const CHAT_LOG_DIR = path.resolve(__dirname, "logs");
+
+// Collapse whitespace so player text can't forge extra log lines.
+function cleanLogText(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function pad(value) {
+  return String(value).padStart(2, "0");
+}
+
+// Append player chat messages to logs/chat-YYYY-MM-DD.log
+app.post("/chat-log", async (req, res) => {
+  const { room, lines } = req.body || {};
+
+  if (
+    (room != null && (typeof room !== "string" || room.length > 128)) ||
+    !Array.isArray(lines) ||
+    lines.length < 1 ||
+    lines.length > 100
+  ) {
+    return res.status(400).json({ error: "Invalid chat log" });
+  }
+
+  const byFile = new Map();
+
+  for (const line of lines) {
+    const at = new Date(line?.at);
+
+    if (
+      Number.isNaN(at.getTime()) ||
+      typeof line.name !== "string" ||
+      line.name.length > 100 ||
+      typeof line.message !== "string" ||
+      !line.message.trim() ||
+      line.message.length > 500
+    ) {
+      return res.status(400).json({ error: "Invalid chat line" });
+    }
+
+    const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+    const time = `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+    const roomLabel = room ? ` [${cleanLogText(room)}]` : "";
+    const text =
+      `[${date} ${time}]${roomLabel} ` +
+      `${cleanLogText(line.name) || "?"}: ${cleanLogText(line.message)}\n`;
+
+    const file = path.join(CHAT_LOG_DIR, `chat-${date}.log`);
+    byFile.set(file, (byFile.get(file) || "") + text);
+  }
+
+  try {
+    await fs.mkdir(CHAT_LOG_DIR, { recursive: true });
+
+    for (const [file, text] of byFile) {
+      await fs.appendFile(file, text, "utf8");
+    }
+
+    res.json({ success: true, logged: lines.length });
+  } catch (error) {
+    console.error("[CHAT-LOG]", error);
+    res.status(500).json({ error: "Failed to write chat log" });
   }
 });
 
