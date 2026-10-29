@@ -1599,6 +1599,9 @@
       "kirk's dik dik",
       "big yahu",
       "john morgan",
+      "/p say",
+      "dead body",
+      "joe mama",
     ];
     const CHAT_TRANSLATIONS = {
       klingon: [
@@ -1780,7 +1783,7 @@
       ],
     };
     let chatLanguage = "english";
-    const krillISH_PROTECTED_COMMANDS = new Set([
+    const KRILLISH_PROTECTED_COMMANDS = new Set([
       "ans",
       "say",
       "lang",
@@ -2087,7 +2090,6 @@
         knownAnswer = false,
         onSent = null,
         translate = true,
-        formatText = true,
       } = {},
     ) {
       if (
@@ -2099,17 +2101,11 @@
       }
 
       chatQueue.push({
-        text: (formatText ? formatChatText(text, translate) : text).slice(
-          0,
-          CHAT_MAX_LENGTH,
-        ),
+        text: formatChatText(text, translate).slice(0, CHAT_MAX_LENGTH),
         kind,
         fallback:
           fallback &&
-          (formatText ? formatChatText(fallback, translate) : fallback).slice(
-            0,
-            CHAT_MAX_LENGTH,
-          ),
+          formatChatText(fallback, translate).slice(0, CHAT_MAX_LENGTH),
         knownAnswer,
         onSent,
       });
@@ -2117,25 +2113,11 @@
     }
 
     // Answers mention the asker, with a nameless fallback for the filter.
-    function enqueueAnswer(name, body, options = {}, preservedAnswer = null) {
+    function enqueueAnswer(name, body, options = {}) {
       if (chatLanguage === "krillish") {
-        const answerStart = preservedAnswer
-          ? body.indexOf(preservedAnswer, "I know! its ".length)
-          : -1;
-        const formattedBody =
-          answerStart === -1
-            ? formatChatText(body)
-            : `${formatChatText(body.slice(0, answerStart), false)}` +
-              `${preservedAnswer}` +
-              formatChatText(
-                body.slice(answerStart + preservedAnswer.length),
-                false,
-              );
-
-        enqueueChat(`${name} ${formattedBody}`, "ans", {
+        enqueueChat(`${name} ${body}`, "ans", {
           ...options,
-          fallback: formattedBody,
-          formatText: false,
+          fallback: body,
         });
         return;
       }
@@ -2305,23 +2287,17 @@
         const pick = tied[Math.floor(Math.random() * tied.length)];
         const rarity = TIER_NAMES[pick.tier] || `${pick.score} pts`;
 
-        const answer = pick.answer.trim();
-        enqueueAnswer(
-          name,
-          `I know! its ${answer} (${rarity})`,
-          {
-            knownAnswer: true,
-            // Tell the muter why their answer was bad.
-            onSent: worst
-              ? () =>
-                  setTimeout(
-                    () => enqueueChat(`${name} thats for muting me :(`),
-                    CHAT_MUTE_TAUNT_DELAY,
-                  )
-              : null,
-          },
-          answer,
-        );
+        enqueueAnswer(name, `I know! its ${pick.answer.trim()} (${rarity})`, {
+          knownAnswer: true,
+          // Tell the muter why their answer was bad.
+          onSent: worst
+            ? () =>
+                setTimeout(
+                  () => enqueueChat(`${name} thats for muting me :(`),
+                  CHAT_MUTE_TAUNT_DELAY,
+                )
+            : null,
+        });
       } catch (error) {
         console.warn("[Krillion Chat-Bot] Lookup failed:", error);
         enqueueAnswer(name, notSure);
