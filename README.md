@@ -10,11 +10,26 @@ The repository has three parts that share a single PostgreSQL database:
 | [`scraper/`](./scraper) | A TypeScript/Prisma script that pulls prompts and their answers from the Krillion API. It also owns the database schema and migrations. |
 | [`DB/`](./DB) | `krillion.sql`, a `pg_dump` backup of the database, used to seed a local database. |
 
-```text
-Browser (playdaily.org)                  This machine
-Tampermonkey userscript  <--HTTP-->  answerer API (127.0.0.1:3001)  -->  PostgreSQL
-                                                                          ^
-Krillion API  <------------------------  scraper (Prisma)  ---------------+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser (playdaily.org)"]
+        US["Tampermonkey userscript<br/>answerer/tempermonkey.js"]
+    end
+
+    subgraph Local["This machine"]
+        API["answerer API (Express)<br/>127.0.0.1:3001"]
+        SCR["scraper (Prisma)"]
+    end
+
+    KAPI["Krillion API"]
+    OAI["OpenAI<br/>(optional AI fallback)"]
+    DB[("PostgreSQL<br/>prompt, answer")]
+
+    US <-->|"HTTP: index, helper, chat-log"| API
+    API -->|"local or dev DB"| DB
+    API -.->|"/ai-answer"| OAI
+    SCR -->|"fetch prompts & answers"| KAPI
+    SCR -->|"DATABASE_URL"| DB
 ```
 
 ## Prerequisites
