@@ -1576,6 +1576,7 @@
     const CHAT_COMMANDS = [
       "ans",
       "say",
+      "lang",
       "mute",
       "unmute",
       "stats",
@@ -1584,9 +1585,248 @@
     ];
     // Alternative command words, e.g. "/p answer" works like "/p ans".
     const CHAT_COMMAND_ALIASES = { answer: "ans" };
+    const CHAT_LANGUAGES = [
+      "english",
+      "klingon",
+      "mandarin",
+      "indian",
+      "ido",
+      "krillish",
+    ];
+    const KRILLISH_WORDS = [
+      "abulele",
+      "assfish",
+      "kirk's dik dik",
+      "big yahu",
+      "john morgan",
+    ];
+    const CHAT_TRANSLATIONS = {
+      klingon: [
+        ["I am not sure...", "jIyajbe'..."],
+        ["I know! its", "vISov! 'oH"],
+        [" thats for muting me :(", " jIghImmo' 'oH :("],
+        ["answers are already muted", "jangmey tlhaplu'taH"],
+        [" left).", " mevta'.)"],
+        ["I was muted recently, ", "ghorgh jIghImpu'... "],
+        ["mute is available again in ", "ghImqa'laHmeH poH: "],
+        ["OK, no answers for ", "lu', jangbe' "],
+        ["Other commands still work.", "latlh ra' QaptaH."],
+        ["answers are not muted.", "jangmey tlhapbe'lu'."],
+        ["unmute was used recently, ", "ghoghHa'pu'... "],
+        ["try again in ", "qa'laH: "],
+        ["OK, answers are back! Try ", "lu', jangmey chegh! "],
+        ["cmds for ", "ra'mey: "],
+        [" ans - the answer", " ans - jang"],
+        [" | say <text> - I repeat it", " | say <text> - vIjatlhqa'"],
+        [" | mute - no answers ", " | mute - jangbe' "],
+        [
+          " | unmute - answers back (every ",
+          " | unmute - jangmey chegh (motlh ",
+        ],
+        [" | stats - bot stats", " | stats - bot mI'"],
+        [" | about - who I am", " | about - jIH 'Iv"],
+        [
+          " | lang <language> - change language",
+          " | lang <language> - choH Hol",
+        ],
+        ["Language changed to ", "choH Hol: "],
+        ["Available languages: ", "Holmey: "],
+        ["Unknown language. Choose: ", "Hol Sovbe'lu'. yIwIv: "],
+        ["uptime ", "poH "],
+        [" | answers given ", " | jangmey nobta' "],
+        [" | unique users ", " | lo'wI' motlh "],
+        [" | interactions ", " | jatlhmey "],
+        [
+          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
+          "jIjangbogh bot jIH. pIqmey jangmey vIqaw. DaHjaj QIn jangmeH ",
+        ],
+        [
+          "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
+          "nuqneH, jIjangbogh bot jIH. DaHjaj QIn janglaH. yIghItlh ",
+        ],
+        [" to see what I can do", " nuq vIlaH 'e' leghmeH"],
+      ],
+      mandarin: [
+        ["I am not sure...", "我不确定……"],
+        ["I know! its", "我知道！答案是"],
+        [" thats for muting me :(", " 这是你禁言我的惩罚 :("],
+        ["answers are already muted", "答案已经被禁用"],
+        [" left).", " 后解除）。"],
+        ["I was muted recently, ", "我刚才被禁言过，"],
+        ["mute is available again in ", "还需等待才能再次禁言："],
+        ["OK, no answers for ", "好的，暂停回答"],
+        ["Other commands still work.", "其他命令仍可使用。"],
+        ["answers are not muted.", "答案没有被禁用。"],
+        ["unmute was used recently, ", "刚才已经解除过禁言，"],
+        ["try again in ", "请稍后再试："],
+        ["OK, answers are back! Try ", "好的，答案恢复了！试试"],
+        ["cmds for ", "命令："],
+        [" ans - the answer", " ans - 获取答案"],
+        [" | say <text> - I repeat it", " | say <text> - 重复内容"],
+        [" | mute - no answers ", " | mute - 暂停回答 "],
+        [" | unmute - answers back (every ", " | unmute - 恢复回答（每隔"],
+        [" | stats - bot stats", " | stats - 机器人统计"],
+        [" | about - who I am", " | about - 关于机器人"],
+        [
+          " | lang <language> - change language",
+          " | lang <language> - 更改语言",
+        ],
+        ["Language changed to ", "语言已更改为"],
+        ["Available languages: ", "可用语言："],
+        ["Unknown language. Choose: ", "未知语言。请选择："],
+        ["uptime ", "运行时间 "],
+        [" | answers given ", " | 已回答 "],
+        [" | unique users ", " | 独立用户 "],
+        [" | interactions ", " | 互动 "],
+        [
+          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
+          "我是答题机器人，会记住之前回合的答案，并为当前问题提供热门答案。使用",
+        ],
+        [
+          "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
+          "你好，我是答题机器人，可以回答当前问题。输入",
+        ],
+        [" to see what I can do", " 查看可用命令"],
+      ],
+      indian: [
+        ["I am not sure...", "मुझे यक़ीन नहीं है..."],
+        ["I know! its", "मुझे पता है! जवाब है"],
+        [" thats for muting me :(", " मुझे म्यूट करने की सज़ा :("],
+        ["answers are already muted", "जवाब पहले से म्यूट हैं"],
+        [" left).", " बाकी)।"],
+        ["I was muted recently, ", "मुझे हाल ही में म्यूट किया गया था, "],
+        [
+          "mute is available again in ",
+          "फिर से म्यूट करने के लिए प्रतीक्षा करें: ",
+        ],
+        ["OK, no answers for ", "ठीक है, जवाब बंद "],
+        ["Other commands still work.", "बाकी कमांड काम करेंगे।"],
+        ["answers are not muted.", "जवाब म्यूट नहीं हैं।"],
+        ["unmute was used recently, ", "हाल ही में अनम्यूट किया गया था, "],
+        ["try again in ", "फिर कोशिश करें: "],
+        ["OK, answers are back! Try ", "ठीक है, जवाब फिर शुरू! आज़माएँ "],
+        ["cmds for ", "कमांड: "],
+        [" ans - the answer", " ans - जवाब"],
+        [" | say <text> - I repeat it", " | say <text> - मैं इसे दोहराऊँगा"],
+        [" | mute - no answers ", " | mute - जवाब बंद "],
+        [" | unmute - answers back (every ", " | unmute - जवाब चालू (हर "],
+        [" | stats - bot stats", " | stats - बॉट आँकड़े"],
+        [" | about - who I am", " | about - मेरे बारे में"],
+        [
+          " | lang <language> - change language",
+          " | lang <language> - भाषा बदलें",
+        ],
+        ["Language changed to ", "भाषा बदलकर "],
+        ["Available languages: ", "उपलब्ध भाषाएँ: "],
+        ["Unknown language. Choose: ", "अज्ञात भाषा। चुनें: "],
+        ["uptime ", "चलने का समय "],
+        [" | answers given ", " | दिए गए जवाब "],
+        [" | unique users ", " | अलग-अलग उपयोगकर्ता "],
+        [" | interactions ", " | बातचीत "],
+        [
+          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
+          "मैं जवाब देने वाला बॉट हूँ। मुझे पिछले राउंड के जवाब याद रहते हैं और मैं मौजूदा सवाल का लोकप्रिय जवाब दे सकता हूँ। पूछें ",
+        ],
+        [
+          "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
+          "नमस्ते, मैं जवाब देने वाला बॉट हूँ। मौजूदा सवाल का जवाब देने के लिए लिखें ",
+        ],
+        [" to see what I can do", " और कमांड देखें"],
+      ],
+      ido: [
+        ["I am not sure...", "Me ne esas certa..."],
+        ["I know! its", "Me savas! Lua"],
+        [" thats for muting me :(", " to esas pro ke tu mutigis me :("],
+        ["answers are already muted", "respondi esas ja mutigita"],
+        [" left).", " ankore)."],
+        ["I was muted recently, ", "On mutigis me recente, "],
+        ["mute is available again in ", "mute itere posiblos pos "],
+        ["OK, no answers for ", "Bone, nula respondo dum "],
+        ["Other commands still work.", "Altra komandi funcionas ankore."],
+        ["answers are not muted.", "respondi ne esas mutigita."],
+        ["unmute was used recently, ", "On demutigis recente, "],
+        ["try again in ", "probisez itere pos "],
+        ["OK, answers are back! Try ", "Bone, respondi retrovenas! Probez "],
+        ["cmds for ", "komandi por "],
+        [" ans - the answer", " ans - la respondo"],
+        [" | say <text> - I repeat it", " | say <text> - me ripetos ol"],
+        [" | mute - no answers ", " | mute - nula respondi dum "],
+        [
+          " | unmute - answers back (every ",
+          " | unmute - respondi retrovenas (singla ",
+        ],
+        [" | stats - bot stats", " | stats - statistiki"],
+        [" | about - who I am", " | about - pri me"],
+        [
+          " | lang <language> - change language",
+          " | lang <language> - chanjar la linguo",
+        ],
+        ["Language changed to ", "La linguo chanjesis a "],
+        ["Available languages: ", "Disponebla linguo: "],
+        ["Unknown language. Choose: ", "Nekonocata linguo. Elekt ez: "],
+        ["uptime ", "dur-tempo "],
+        [" | answers given ", " | donita respondi "],
+        [" | unique users ", " | diversa uzanti "],
+        [" | interactions ", " | interagadi "],
+        [
+          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
+          "Me esas respondanta roboto. Me memoras respondi de pasinta rondi e povas donar la maxim populara respondo a la nuna questiono. Demandez per ",
+        ],
+        [
+          "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
+          "Saluto! Me esas respondanta roboto e povas respondar la nuna questiono. Skribez ",
+        ],
+        [" to see what I can do", " por vidar mea komandi"],
+      ],
+    };
+    let chatLanguage = "english";
+    const krillISH_PROTECTED_COMMANDS = new Set([
+      "ans",
+      "say",
+      "lang",
+      "mute",
+      "unmute",
+      "stats",
+      "about",
+      "help",
+      "english",
+      "klingon",
+      "mandarin",
+      "indian",
+      "ido",
+      "krillish",
+    ]);
+
+    function formatChatText(text, translate = true) {
+      if (chatLanguage === "krillish") {
+        return text.replace(
+          /\/(?:portik|p)\b|[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/giu,
+          (word) =>
+            word.startsWith("/") ||
+            KRILLISH_PROTECTED_COMMANDS.has(word.toLowerCase())
+              ? word
+              : KRILLISH_WORDS[
+                  Math.floor(Math.random() * KRILLISH_WORDS.length)
+                ],
+        );
+      }
+
+      const translations = translate && CHAT_TRANSLATIONS[chatLanguage];
+
+      if (!translations) {
+        return text;
+      }
+
+      return translations.reduce(
+        (result, [english, translated]) =>
+          result.split(english).join(translated),
+        text,
+      );
+    }
     const CHAT_MAX_LENGTH = 200; // Krillion's CHAT_MAX_LENGTH
     const CHAT_GAP = 5000; // Krillion requires at least 2200ms between messages
-    const CHAT_REFUSED_TEXT = "That message wasn't sent. Keep the chat friendly.";
+    const CHAT_REFUSED_TEXT =
+      "That message wasn't sent. Keep the chat friendly.";
     // Krillion shows its refusal notice at most once per 4000ms.
     const CHAT_REFUSED_NOTICE_GAP = 4000;
     // Pause before sending anything after a refused message.
@@ -1610,15 +1850,14 @@
     const LAST_PROMPT_MAX_AGE = 2 * 60 * 1000;
     const CHAT_HELP =
       `cmds for ${BOT_COMMAND}` +
-      (BOT_PREFIX_ALIASES.length
-        ? ` (or /${BOT_PREFIX_ALIASES[0]}):`
-        : ":") +
+      (BOT_PREFIX_ALIASES.length ? ` (or /${BOT_PREFIX_ALIASES[0]}):` : ":") +
       " ans - the answer" +
       " | say <text> - I repeat it" +
       ` | mute - no answers ${formatWait(CHAT_MUTE_MS)}` +
       ` | unmute - answers back (every ${formatWait(CHAT_UNMUTE_COOLDOWN)})` +
       " | stats - bot stats" +
-      " | about - who I am";
+      " | about - who I am" +
+      " | lang <language> - change language";
     // No punctuation right after commands: players copy "help!" literally.
     const WELCOME_MESSAGE =
       "Hi, I'm an answer bot - I can tell you an answer for the current " +
@@ -1843,7 +2082,13 @@
     function enqueueChat(
       text,
       kind = "info",
-      { fallback = null, knownAnswer = false, onSent = null } = {},
+      {
+        fallback = null,
+        knownAnswer = false,
+        onSent = null,
+        translate = true,
+        formatText = true,
+      } = {},
     ) {
       if (
         !chatBotSwitch.checked ||
@@ -1854,9 +2099,17 @@
       }
 
       chatQueue.push({
-        text: text.slice(0, CHAT_MAX_LENGTH),
+        text: (formatText ? formatChatText(text, translate) : text).slice(
+          0,
+          CHAT_MAX_LENGTH,
+        ),
         kind,
-        fallback: fallback && fallback.slice(0, CHAT_MAX_LENGTH),
+        fallback:
+          fallback &&
+          (formatText ? formatChatText(fallback, translate) : fallback).slice(
+            0,
+            CHAT_MAX_LENGTH,
+          ),
         knownAnswer,
         onSent,
       });
@@ -1864,8 +2117,40 @@
     }
 
     // Answers mention the asker, with a nameless fallback for the filter.
-    function enqueueAnswer(name, body, options = {}) {
-      enqueueChat(`${name} ${body}`, "ans", { ...options, fallback: body });
+    function enqueueAnswer(name, body, options = {}, preservedAnswer = null) {
+      if (chatLanguage === "krillish") {
+        const answerStart = preservedAnswer
+          ? body.indexOf(preservedAnswer, "I know! its ".length)
+          : -1;
+        const formattedBody =
+          answerStart === -1
+            ? formatChatText(body)
+            : `${formatChatText(body.slice(0, answerStart), false)}` +
+              `${preservedAnswer}` +
+              formatChatText(
+                body.slice(answerStart + preservedAnswer.length),
+                false,
+              );
+
+        enqueueChat(`${name} ${formattedBody}`, "ans", {
+          ...options,
+          fallback: formattedBody,
+          formatText: false,
+        });
+        return;
+      }
+
+      const answerPrefix = "I know! its ";
+      const localizedBody = body.startsWith(answerPrefix)
+        ? `${formatChatText(answerPrefix)}${body.slice(answerPrefix.length)}`
+        : body === "I am not sure..."
+          ? formatChatText(body)
+          : body;
+      enqueueChat(`${name} ${localizedBody}`, "ans", {
+        ...options,
+        fallback: localizedBody,
+        translate: false,
+      });
     }
 
     // Current verified Classic prompt. The question card is hidden once
@@ -1912,7 +2197,9 @@
           ? {
               matchKey: lastSeenPrompt.matchKey,
               question: lastSeenPrompt.prompt.text,
-              ageSeconds: Math.round((Date.now() - lastSeenPrompt.seenAt) / 1000),
+              ageSeconds: Math.round(
+                (Date.now() - lastSeenPrompt.seenAt) / 1000,
+              ),
             }
           : null,
       });
@@ -2018,17 +2305,23 @@
         const pick = tied[Math.floor(Math.random() * tied.length)];
         const rarity = TIER_NAMES[pick.tier] || `${pick.score} pts`;
 
-        enqueueAnswer(name, `I know! its ${pick.answer.trim()} (${rarity})`, {
-          knownAnswer: true,
-          // Tell the muter why their answer was bad.
-          onSent: worst
-            ? () =>
-                setTimeout(
-                  () => enqueueChat(`${name} thats for muting me :(`),
-                  CHAT_MUTE_TAUNT_DELAY,
-                )
-            : null,
-        });
+        const answer = pick.answer.trim();
+        enqueueAnswer(
+          name,
+          `I know! its ${answer} (${rarity})`,
+          {
+            knownAnswer: true,
+            // Tell the muter why their answer was bad.
+            onSent: worst
+              ? () =>
+                  setTimeout(
+                    () => enqueueChat(`${name} thats for muting me :(`),
+                    CHAT_MUTE_TAUNT_DELAY,
+                  )
+              : null,
+          },
+          answer,
+        );
       } catch (error) {
         console.warn("[Krillion Chat-Bot] Lookup failed:", error);
         enqueueAnswer(name, notSure);
@@ -2086,6 +2379,10 @@
 
       const sayText =
         action === "say" ? CHAT_SAY.exec(message.body)?.[1].trim() : null;
+      const requestedLanguage =
+        action === "lang"
+          ? message.body.slice(command[0].length).trim().toLowerCase()
+          : "";
 
       if (action === "say" && !sayText) {
         return;
@@ -2122,7 +2419,22 @@
       if (action === "ans") {
         replyWithAnswer(message.name).catch(console.error);
       } else if (action === "say") {
-        enqueueChat(sayText);
+        enqueueChat(sayText, "info", { translate: false });
+      } else if (action === "lang") {
+        if (!requestedLanguage) {
+          enqueueChat(
+            `${message.name} Available languages: ${CHAT_LANGUAGES.join(", ")}.`,
+          );
+        } else if (CHAT_LANGUAGES.includes(requestedLanguage)) {
+          chatLanguage = requestedLanguage;
+          enqueueChat(
+            `${message.name} Language changed to ${requestedLanguage}.`,
+          );
+        } else {
+          enqueueChat(
+            `${message.name} Unknown language. Choose: ${CHAT_LANGUAGES.join(", ")}.`,
+          );
+        }
       } else if (action === "stats") {
         enqueueChat(`${message.name} ${describeStats()}`);
       } else if (action === "about") {
@@ -2184,9 +2496,7 @@
       chatMutedUntil = now;
       chatLastUnmuteAt = now;
 
-      enqueueChat(
-        `${name} OK, answers are back! Try ${BOT_COMMAND} ans.`,
-      );
+      enqueueChat(`${name} OK, answers are back! Try ${BOT_COMMAND} ans.`);
     }
 
     function scanChat(handle = chatBotSwitch.checked) {
