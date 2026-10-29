@@ -16,6 +16,7 @@
   const BOT_PREFIX = "portik";
   // Shorter prefixes that work the same way, e.g. "/p ans".
   const BOT_PREFIX_ALIASES = ["p"];
+  const GITHUB_LINK = "github.com/p0rt1k";
 
   const DB_NAME = "krillion-answer-index";
   const STORE = "answers";
@@ -1639,9 +1640,10 @@
         [" | answers given ", " | jangmey nobta' "],
         [" | unique users ", " | lo'wI' motlh "],
         [" | interactions ", " | jatlhmey "],
+        ["I'm an answer bot made by ", "jIjangbogh bot jIH, chenmoHta' "],
         [
-          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
-          "jIjangbogh bot jIH. pIqmey jangmey vIqaw. DaHjaj QIn jangmeH ",
+          " - I give a top answer for the current question. Ask with ",
+          " - DaHjaj QIn jang vInob. jangmeH ",
         ],
         [
           "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
@@ -1681,9 +1683,10 @@
         [" | answers given ", " | 已回答 "],
         [" | unique users ", " | 独立用户 "],
         [" | interactions ", " | 互动 "],
+        ["I'm an answer bot made by ", "我是答题机器人，作者 "],
         [
-          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
-          "我是答题机器人，会记住之前回合的答案，并为当前问题提供热门答案。使用",
+          " - I give a top answer for the current question. Ask with ",
+          " ——为当前问题提供热门答案。使用",
         ],
         [
           "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
@@ -1726,9 +1729,10 @@
         [" | answers given ", " | दिए गए जवाब "],
         [" | unique users ", " | अलग-अलग उपयोगकर्ता "],
         [" | interactions ", " | बातचीत "],
+        ["I'm an answer bot made by ", "मैं जवाब देने वाला बॉट हूँ, निर्माता "],
         [
-          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
-          "मैं जवाब देने वाला बॉट हूँ। मुझे पिछले राउंड के जवाब याद रहते हैं और मैं मौजूदा सवाल का लोकप्रिय जवाब दे सकता हूँ। पूछें ",
+          " - I give a top answer for the current question. Ask with ",
+          " - मौजूदा सवाल का लोकप्रिय जवाब देता हूँ। पूछें ",
         ],
         [
           "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
@@ -1771,9 +1775,10 @@
         [" | answers given ", " | donita respondi "],
         [" | unique users ", " | diversa uzanti "],
         [" | interactions ", " | interagadi "],
+        ["I'm an answer bot made by ", "Me esas respondanta roboto da "],
         [
-          "I'm an answer bot. I remember answers from past rounds and can give you a top answer for the current question. Ask with ",
-          "Me esas respondanta roboto. Me memoras respondi de pasinta rondi e povas donar la maxim populara respondo a la nuna questiono. Demandez per ",
+          " - I give a top answer for the current question. Ask with ",
+          " - me donas populara respondo a la nuna questiono. Demandez per ",
         ],
         [
           "Hi, I'm an answer bot - I can tell you an answer for the current question. Type ",
@@ -1798,6 +1803,8 @@
       "indian",
       "ido",
       "krillish",
+      // Keep the GitHub link readable in Krillish.
+      ...GITHUB_LINK.split(/[^\p{L}\p{N}]+/u),
     ]);
 
     function formatChatText(text, translate = true) {
@@ -1866,8 +1873,8 @@
       "Hi, I'm an answer bot - I can tell you an answer for the current " +
       `question. Type ${BOT_COMMAND} help to see what I can do`;
     const CHAT_ABOUT =
-      "I'm an answer bot. I remember answers from past rounds and can " +
-      "give you a top answer for the current question. " +
+      `I'm an answer bot made by ${GITHUB_LINK} - I give a top answer ` +
+      "for the current question. " +
       `Ask with ${BOT_COMMAND} ans, all commands: ${BOT_COMMAND} help`;
     const WELCOME_DELAY = 5000;
     const WELCOME_REPEAT = 15 * 60 * 1000;
