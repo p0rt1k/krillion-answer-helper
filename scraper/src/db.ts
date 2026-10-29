@@ -6,7 +6,7 @@ import { Mutex } from 'async-mutex'
 const mutex = new Mutex()
 
 export async function getAllPrompts() {
-  return prisma.prompt.findMany({ where: { cat: { not: null } } })
+  return prisma.prompt.findMany({ where: { cat: { not: null }, answers: { none: { value: { gte: 4 } } } } })
 }
 
 export async function addPrompts(prompts: Prisma.promptCreateManyInput[]) {
@@ -30,6 +30,11 @@ export async function addAnswers(answers: Prisma.answerCreateManyInput[]) {
       skipDuplicates: true
     })
   } catch (error) {
+    console.log(
+      await prisma.answer.findMany({
+        where: { promptId: answers[0].promptId, text: { in: answers.map((x) => x.text) } }
+      })
+    )
     console.error(error, answers)
   } finally {
     release()
